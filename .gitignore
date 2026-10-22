@@ -1,0 +1,62 @@
+
+# Visual Studio / MSBuild
+.vs/
+**/Debug/
+**/Release/
+**/x64/
+**/x86/
+**/Win32/
+**/ARM/
+**/ARM64/
+**/ipch/
+**/obj/
+**/bin/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
+*.opendb
+*.sdf
+*.opensdf
+*.pdb
+*.ilk
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.exp
+*.pch
+*.idb
+*.tlog/
+*.lastbuildstate
+*.recipe
+
+# CMake generated files and build directories
+/build/
+/build-*/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# Generated output images from the SeamCarving program
+/SeamCarving/SeamCarving/output.png
+/SeamCarving/SeamCarving/output_energy.png
+/SeamCarving/SeamCarving/output_seams.png
+
+# IDE and editor temporary files
+.idea/
+*.swp
+*.swo
+*~
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
