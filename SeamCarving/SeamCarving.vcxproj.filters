@@ -30,6 +30,8 @@
     <ClInclude Include="stb_image_write.h"><Filter>Third Party</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="sample.png"><Filter>Resource Files</Filter></Image>
+    <Image Include="input\sample.png"><Filter>Resource Files</Filter></Image>
+    <Image Include="input\astronaut.png"><Filter>Resource Files</Filter></Image>
+    <Image Include="input\coffee.png"><Filter>Resource Files</Filter></Image>
   </ItemGroup>
 </Project>

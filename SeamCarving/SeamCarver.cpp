@@ -24,6 +24,21 @@ namespace sc
         {
             return 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
         }
+
+        // Greedy tie-breaking: straight first, then left, then right.
+        int bestNextColumn(const double* row, int width, int col)
+        {
+            int bestCol = col;
+            double best = row[col];
+            if (col > 0 && row[col - 1] < best)
+            {
+                best = row[col - 1];
+                bestCol = col - 1;
+            }
+            if (col < width - 1 && row[col + 1] < best)
+                bestCol = col + 1;
+            return bestCol;
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -132,6 +147,38 @@ namespace sc
     }
 
     // ------------------------------------------------------------------------
+    // (b alt) Greedy vertical seam
+    //
+    // Pick the smallest-energy pixel in row 0, then keep extending the seam
+    // by choosing the cheapest reachable pixel on the next row. This is
+    // O(W + H) time and O(H) space, but it is not globally optimal.
+    // ------------------------------------------------------------------------
+    Seam findVerticalSeamGreedy(const EnergyMap& energy, int width, int height, double* totalCost)
+    {
+        const int w = width;
+        const int h = height;
+
+        Seam seam(h);
+        const double* row0 = energy.data();
+        int col = static_cast<int>(std::min_element(row0, row0 + w) - row0);
+
+        double cost = 0.0;
+        seam[0] = col;
+        cost += row0[col];
+
+        for (int y = 1; y < h; ++y)
+        {
+            const double* row = &energy[static_cast<size_t>(y) * w];
+            col = bestNextColumn(row, w, col);
+            seam[y] = col;
+            cost += row[col];
+        }
+
+        if (totalCost) *totalCost = cost;
+        return seam;
+    }
+
+    // ------------------------------------------------------------------------
     // (c) Remove a vertical seam: shift every pixel right of the seam one
     // place left in each row. Time O(W*H).
     // ------------------------------------------------------------------------
@@ -226,8 +273,10 @@ namespace sc
                 stats.energyMs += msSince(t0);
 
                 t0 = Clock::now();
-                const Seam seam = finder(energy, img.width, img.height, nullptr); // (b)
+                double seamCost = 0.0;
+                const Seam seam = finder(energy, img.width, img.height, &seamCost); // (b)
                 stats.seamMs += msSince(t0);
+                stats.removedEnergy += seamCost;
 
                 for (int y = 0; y < img.height; ++y)
                     removedBy[origin[static_cast<size_t>(y) * img.width + seam[y]]] = tag;
@@ -262,6 +311,7 @@ namespace sc
         }
 
         result.output = std::move(img);
+        result.removedBy = std::move(removedBy);
         stats.totalMs = msSince(start);
         return result;
     }

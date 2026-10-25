@@ -88,7 +88,9 @@
     <ClInclude Include="stb_image_write.h" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="sample.png" />
+    <Image Include="input\sample.png" />
+    <Image Include="input\astronaut.png" />
+    <Image Include="input\coffee.png" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

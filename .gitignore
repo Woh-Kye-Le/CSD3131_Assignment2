@@ -46,9 +46,8 @@ CTestTestfile.cmake
 Testing/
 
 # Generated output images from the SeamCarving program
-/SeamCarving/SeamCarving/output.png
-/SeamCarving/SeamCarving/output_energy.png
-/SeamCarving/SeamCarving/output_seams.png
+/SeamCarving/output/*
+!/SeamCarving/output/.gitkeep
 
 # IDE and editor temporary files
 .idea/

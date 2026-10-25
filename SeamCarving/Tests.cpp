@@ -1,6 +1,6 @@
 // Tests.cpp
-// Correctness tests for the DP seam carver. The key test compares the DP
-// answer against brute-force enumeration of every possible seam.
+// Correctness tests for the seam carver. The key DP test compares against
+// brute-force enumeration of every possible seam, and greedy is checked too.
 #include "Tests.h"
 #include "SeamCarver.h"
 
@@ -212,6 +212,96 @@ namespace
         try { carve(img, 41, 30); } catch (const std::invalid_argument&) { threw = true; }
         check(threw, "enlarging is rejected (Q1 only requires reduction)");
     }
+
+    // Greedy should return a valid seam and consistent cost, but it should
+    // lose to DP on the standard counter-example.
+    void testGreedy()
+    {
+        std::cout << "Test 6: greedy seam search\n";
+
+        {
+            const int w = 4, h = 3;
+            EnergyMap e = {
+                 1,  2,  9,  9,
+                 9,  1,  9,  9,
+                50, 50, 50,  9
+            };
+
+            double dpCost = 0.0;
+            double greedyCost = 0.0;
+            const Seam dp = findVerticalSeamDP(e, w, h, &dpCost);
+            const Seam greedy = findVerticalSeamGreedy(e, w, h, &greedyCost);
+            const double brute = bruteForceMinSeam(e, w, h);
+
+            check(dp == Seam({ 1, 2, 3 }), "DP finds the globally cheapest counter-example seam");
+            check(greedy == Seam({ 0, 1, 1 }), "greedy gets trapped by the local minimum");
+            check(std::fabs(dpCost - 20.0) < 1e-12, "DP counter-example cost is 20");
+            check(std::fabs(greedyCost - 52.0) < 1e-12, "greedy counter-example cost is 52");
+            check(std::fabs(brute - dpCost) < 1e-12, "brute force agrees with DP on the counter-example");
+            check(greedyCost > dpCost, "greedy can be worse than DP");
+        }
+
+        {
+            const int w = 3, h = 4;
+            EnergyMap ties = {
+                5, 1, 5,
+                7, 7, 7,
+                7, 7, 7,
+                7, 7, 7
+            };
+            const Seam greedy = findVerticalSeamGreedy(ties, w, h);
+            check(greedy == Seam({ 1, 1, 1, 1 }), "greedy breaks ties straight, then left, then right");
+        }
+
+        {
+            std::mt19937 rng(20261024);
+            std::uniform_int_distribution<int> dw(1, 7), dh(1, 8);
+            std::uniform_real_distribution<double> de(0.0, 100.0);
+
+            bool greedyValid = true;
+            bool greedyCostConsistent = true;
+            bool dpNeverWorse = true;
+
+            for (int t = 0; t < 1000; ++t)
+            {
+                const int w = dw(rng), h = dh(rng);
+                EnergyMap e(static_cast<size_t>(w) * h);
+                for (auto& v : e) v = std::round(de(rng));
+
+                double dpCost = 0.0;
+                double greedyCost = 0.0;
+                const Seam dp = findVerticalSeamDP(e, w, h, &dpCost);
+                const Seam greedy = findVerticalSeamGreedy(e, w, h, &greedyCost);
+
+                if (!isValidSeam(greedy, w, h)) greedyValid = false;
+                if (std::fabs(seamCost(e, w, greedy) - greedyCost) > 1e-9) greedyCostConsistent = false;
+                if (dpCost - greedyCost > 1e-9) dpNeverWorse = false;
+                if (!isValidSeam(dp, w, h)) dpNeverWorse = false;
+            }
+
+            check(greedyValid, "every greedy seam is connected and in bounds");
+            check(greedyCostConsistent, "greedy seam sums to the reported cost");
+            check(dpNeverWorse, "DP seam cost is never higher than greedy on the same map");
+        }
+
+        {
+            std::mt19937 rng(31415);
+            Image img = randomImage(30, 20, rng);
+            const CarveResult greedy = carve(img, 18, 11, findVerticalSeamGreedy);
+
+            const int removed = 30 * 20 - 18 * 11;
+            const int removedCount = static_cast<int>(std::count_if(
+                greedy.removedBy.begin(), greedy.removedBy.end(),
+                [](uint8_t tag) { return tag != 0; }));
+
+            check(greedy.output.width == 18 && greedy.output.height == 11, "greedy carve reaches the target size");
+            check(greedy.stats.verticalSeamsRemoved == 12 && greedy.stats.horizontalSeamsRemoved == 9,
+                  "greedy carve reports the right seam counts");
+            check(greedy.stats.removedEnergy >= 0.0, "greedy carve reports non-negative removed energy");
+            check(static_cast<int>(greedy.removedBy.size()) == 30 * 20, "removedBy tracks the original image size");
+            check(removedCount == removed, "removedBy marks every removed pixel exactly once");
+        }
+    }
 }
 
 void printSeamCountTable()
@@ -243,6 +333,7 @@ bool runAllTests()
     testEnergy();
     testTranspose();
     testCarve();
+    testGreedy();
     std::cout << "\nResult: " << g_passed << " passed, " << g_failed << " failed.\n";
     printSeamCountTable();
     return g_failed == 0;

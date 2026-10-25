@@ -33,6 +33,11 @@ namespace sc
     // Backtracks from the smallest entry in the last row.
     Seam findVerticalSeamDP(const EnergyMap& energy, int width, int height, double* totalCost = nullptr);
 
+    // ---- Step (b alt): vertical seam by greedy row-by-row search --------
+    // Starts at the smallest pixel in row 0, then on each later row picks
+    // the cheapest reachable pixel among {col-1, col, col+1}.
+    Seam findVerticalSeamGreedy(const EnergyMap& energy, int width, int height, double* totalCost = nullptr);
+
     // ---- Step (c): seam removal ------------------------------------------
     // Removes one pixel per row. `origin` (same layout as img.pixels) tracks
     // each pixel's index in the ORIGINAL image so seams can be drawn later.
@@ -47,8 +52,9 @@ namespace sc
     {
         int verticalSeamsRemoved = 0;
         int horizontalSeamsRemoved = 0;
+        double removedEnergy = 0.0; // sum of the energies of the removed seams
         double energyMs = 0.0;   // time spent recomputing energy maps
-        double seamMs = 0.0;     // time spent finding seams (the DP)
+        double seamMs = 0.0;     // time spent finding seams
         double removeMs = 0.0;   // time spent removing seams
         double totalMs = 0.0;
     };
@@ -57,6 +63,7 @@ namespace sc
     {
         Image output;   // resized image
         Image seamMap;  // original image with removed seams drawn (red = vertical, blue = horizontal)
+        std::vector<uint8_t> removedBy; // 0 kept, 1 removed by a vertical seam, 2 by a horizontal seam
         CarveStats stats;
     };
 
