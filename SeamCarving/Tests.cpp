@@ -12,6 +12,8 @@
 #include <limits>
 #include <random>
 #include <string>
+#include <stdexcept>
+#include <utility>
 
 using namespace sc;
 
@@ -302,6 +304,78 @@ namespace
             check(removedCount == removed, "removedBy marks every removed pixel exactly once");
         }
     }
+
+    void testGraphCut()
+    {
+        std::cout << "Test 7: graph cut vs DP and brute force\n";
+        std::mt19937 rng(4601);
+        std::uniform_int_distribution<int> dw(1, 7), dh(1, 8), integerEnergy(0, 20);
+        std::uniform_real_distribution<double> realEnergy(0.0, 100.0);
+        bool optimal = true, valid = true, consistent = true;
+        for (int trial = 0; trial < 2000; ++trial)
+        {
+            const int w = dw(rng), h = dh(rng);
+            EnergyMap e(static_cast<size_t>(w) * h);
+            for (double& value : e)
+                value = trial % 2 ? realEnergy(rng) : integerEnergy(rng);
+            double cutCost = 0, dpCost = 0;
+            const Seam cut = findVerticalSeamGraphCut(e, w, h, &cutCost);
+            findVerticalSeamDP(e, w, h, &dpCost);
+            valid &= isValidSeam(cut, w, h);
+            consistent &= std::fabs(seamCost(e, w, cut) - cutCost) < 1e-8;
+            optimal &= std::fabs(cutCost - dpCost) < 1e-8 &&
+                std::fabs(cutCost - bruteForceMinSeam(e, w, h)) < 1e-8;
+        }
+        check(optimal, "graph cut equals DP and brute-force cost on 2000 grids (integer and fractional)");
+        check(valid, "all graph-cut seams are connected and in bounds");
+        check(consistent, "graph-cut seam sums to reported cost");
+        double cost = -1;
+        check(findVerticalSeamGraphCut({ 9,9,1, 9,9,2, 9,9,3 }, 3, 3, &cost) == Seam({ 2,2,2 }) && cost == 6,
+            "last-column optimum is selectable and correctly charged");
+        check(findVerticalSeamGraphCut({ 1,9,9, 2,9,9, 3,9,9 }, 3, 3, &cost) == Seam({ 0,0,0 }) && cost == 6,
+            "first-column optimum is selectable and correctly charged");
+        check(findVerticalSeamGraphCut({ 3,1,4 }, 1, 3, &cost) == Seam({ 0,0,0 }) && cost == 8,
+            "one-column map charges every pixel");
+        check(findVerticalSeamGraphCut({ 8,3,5,1 }, 4, 1, &cost) == Seam({ 3 }) && cost == 1,
+            "one-row map finds its cheapest pixel");
+        const Seam zeros = findVerticalSeamGraphCut(EnergyMap(20, 0), 4, 5, &cost);
+        check(isValidSeam(zeros, 4, 5) && cost == 0, "all-zero map returns a valid zero-cost seam");
+        const Seam jump = findVerticalSeamGraphCut({ 0,9,9,9, 9,9,9,0 }, 4, 2, &cost);
+        check(isValidSeam(jump, 4, 2) && cost == 9, "diagonal constraints prevent disconnected row minima");
+        const Seam zigzag = findVerticalSeamGraphCut({ 0,9,9, 9,0,9, 9,9,0, 9,0,9, 0,9,9 }, 3, 5, &cost);
+        check(zigzag == Seam({ 0,1,2,1,0 }) && cost == 0, "both diagonal directions are allowed");
+        auto rejected = [](const EnergyMap& e, int w, int h) {
+            try { findVerticalSeamGraphCut(e, w, h); }
+            catch (const std::invalid_argument&) { return true; }
+            return false;
+            };
+        check(rejected({}, 0, 1) && rejected({ 1 }, 2, 1), "invalid dimensions and map size rejected");
+        check(rejected({ -1 }, 1, 1) && rejected({ std::numeric_limits<double>::infinity() }, 1, 1) &&
+            rejected({ std::numeric_limits<double>::quiet_NaN() }, 1, 1), "negative and non-finite energies rejected");
+
+        const Image img = randomImage(12, 10, rng);
+        bool dimensions = true, counts = true, removed = true, smallEquivalent = true;
+        for (const auto& size : std::vector<std::pair<int, int>>{ {9,10}, {12,7}, {9,7}, {1,1}, {12,10} })
+        {
+            const auto result = carve(img, size.first, size.second, findVerticalSeamGraphCut);
+            dimensions &= result.output.width == size.first && result.output.height == size.second;
+            counts &= result.stats.verticalSeamsRemoved == 12 - size.first &&
+                result.stats.horizontalSeamsRemoved == 10 - size.second;
+            removed &= std::count_if(result.removedBy.begin(), result.removedBy.end(),
+                [](uint8_t v) { return v != 0; }) == 120 - size.first * size.second;
+        }
+        // A one-seam carve has the same input energy map for both finders.
+        // Multi-seam costs need not agree because tie choices change later images.
+        for (const auto& size : std::vector<std::pair<int, int>>{ {11,10}, {12,9} })
+        {
+            const auto cut = carve(img, size.first, size.second, findVerticalSeamGraphCut);
+            const auto dp = carve(img, size.first, size.second, findVerticalSeamDP);
+            smallEquivalent &= std::fabs(cut.stats.removedEnergy - dp.stats.removedEnergy) < 1e-7;
+        }
+        check(dimensions && counts && removed, "vertical, horizontal, mixed, 1x1 and unchanged carve pipelines");
+        check(smallEquivalent, "one vertical or horizontal seam matches DP minimum energy");
+    }
+
 }
 
 void printSeamCountTable()
@@ -334,6 +408,7 @@ bool runAllTests()
     testTranspose();
     testCarve();
     testGreedy();
+    testGraphCut();
     std::cout << "\nResult: " << g_passed << " passed, " << g_failed << " failed.\n";
     printSeamCountTable();
     return g_failed == 0;

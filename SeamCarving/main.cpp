@@ -150,11 +150,28 @@ namespace
     AlgorithmChoice parseAlgorithm(const std::string& name)
     {
         const std::string key = lower(trim(name));
-        if (key.empty() || key == "dp" || key == "dynamic" || key == "dynamic-programming")
+
+        if (key.empty() ||
+            key == "dp" ||
+            key == "dynamic" ||
+            key == "dynamic-programming")
+        {
             return { "dp", sc::findVerticalSeamDP };
+        }
+
         if (key == "greedy")
             return { "greedy", sc::findVerticalSeamGreedy };
-        throw std::invalid_argument("Algorithm must be 'dp' or 'greedy'.");
+
+        if (key == "graphcut" ||
+            key == "graph-cut" ||
+            key == "cut")
+        {
+            return { "graphcut", sc::findVerticalSeamGraphCut };
+        }
+
+        throw std::invalid_argument(
+            "Algorithm must be 'dp', 'greedy', or 'graphcut'."
+        );
     }
 
     void blit(Image& dst, int dstX, int dstY, const Image& src)
@@ -346,30 +363,30 @@ namespace
     }
 
     // Runs both algorithms, saves their outputs, and prints the comparison.
-    int compareAlgorithms(const std::string& inputPath, int targetW, int targetH)
+    int compareAlgorithms(const std::string& inputPath, int targetW, int targetH, const AlgorithmChoice& alternative = { "greedy", sc::findVerticalSeamGreedy })
     {
         Image input;
         if (loadInputImage(inputPath, input) != 0) return 1;
 
         const std::string name = originalName(inputPath);
         const std::string dpPath = outputName(name, "dp", "");
-        const std::string greedyPath = outputName(name, "greedy", "");
+        const std::string otherPath = outputName(name, alternative.name, "");
         const std::string dpSeamsPath = outputName(name, "dp", "_seams");
-        const std::string greedySeamsPath = outputName(name, "greedy", "_seams");
+        const std::string otherSeamsPath = outputName(name, alternative.name, "_seams");
         const std::string dpEnergyPath = outputName(name, "dp", "_energy");
-        const std::string greedyEnergyPath = outputName(name, "greedy", "_energy");
-        const std::string sheetPath = outputName(name, "comparison", "");
+        const std::string otherEnergyPath = outputName(name, alternative.name, "_energy");
+        const std::string sheetPath = outputName(name, alternative.name == "greedy" ? "comparison" : "comparison_graphcut", "");
 
         std::cout << "\nInput : " << inputPath << " (" << input.width << " x " << input.height << ")\n";
         std::cout << "Target: " << targetW << " x " << targetH << "\n";
-        std::cout << "Running DP and greedy...\n";
+        std::cout << "Running DP and " << alternative.name << "...\n";
 
         BenchResult dpBench;
-        BenchResult greedyBench;
+        BenchResult otherBench;
         try
         {
             dpBench = carveBestOf3(input, targetW, targetH, sc::findVerticalSeamDP);
-            greedyBench = carveBestOf3(input, targetW, targetH, sc::findVerticalSeamGreedy);
+            otherBench = carveBestOf3(input, targetW, targetH, alternative.finder);
         }
         catch (const std::exception& ex)
         {
@@ -378,16 +395,16 @@ namespace
         }
 
         const sc::CarveResult& dpResult = dpBench.result;
-        const sc::CarveResult& greedyResult = greedyBench.result;
+        const sc::CarveResult& otherResult = otherBench.result;
 
-        const Image sheet = makeComparisonSheet(input, dpResult, greedyResult);
+        const Image sheet = makeComparisonSheet(input, dpResult, otherResult);
         const Image energy = sc::energyToImage(sc::computeEnergy(input), input.width, input.height);
         bool ok = saveImage(dpPath, dpResult.output);
-        ok &= saveImage(greedyPath, greedyResult.output);
+        ok &= saveImage(otherPath, otherResult.output);
         ok &= saveImage(dpSeamsPath, dpResult.seamMap);
-        ok &= saveImage(greedySeamsPath, greedyResult.seamMap);
+        ok &= saveImage(otherSeamsPath, otherResult.seamMap);
         ok &= saveImage(dpEnergyPath, energy);
-        ok &= saveImage(greedyEnergyPath, energy);
+        ok &= saveImage(otherEnergyPath, energy);
         ok &= saveImage(sheetPath, sheet);
         if (!ok)
         {
@@ -396,28 +413,29 @@ namespace
         }
 
         printStats("dp", dpBench.bestStats);
-        printStats("greedy", greedyBench.bestStats);
+        printStats(alternative.name, otherBench.bestStats);
 
+        std::cout << "\nComparing DP with " << alternative.name << "\n";
         std::printf("\n[comparison] (best of 3 runs per timing field)\n");
-        std::printf("  Greedy extra removed energy : %10.2f %%\n",
-                    percentExtra(greedyBench.bestStats.removedEnergy, dpBench.bestStats.removedEnergy));
+        std::printf("  Other extra removed energy : %10.2f %%\n",
+            percentExtra(otherBench.bestStats.removedEnergy, dpBench.bestStats.removedEnergy));
         std::printf("  Shared removed pixels       : %10.2f %%\n",
-                    removedPixelShare(dpResult.removedBy, greedyResult.removedBy));
-        std::printf("  PSNR(dp, greedy)            : %10.2f dB\n",
-                    computePSNR(dpResult.output, greedyResult.output));
-        std::printf("  Seam-search speed-up        : %10.2f x\n",
-                    speedup(dpBench.bestStats.seamMs, greedyBench.bestStats.seamMs));
-        std::printf("  Total speed-up              : %10.2f x\n",
-                    speedup(dpBench.bestStats.totalMs, greedyBench.bestStats.totalMs));
+            removedPixelShare(dpResult.removedBy, otherResult.removedBy));
+        std::printf("  PSNR(dp, other)            : %10.2f dB\n",
+            computePSNR(dpResult.output, otherResult.output));
+        std::printf("  Seam-search speed-up        : %10.6f x\n",
+            speedup(dpBench.bestStats.seamMs, otherBench.bestStats.seamMs));
+        std::printf("  Total speed-up              : %10.6f x\n",
+            speedup(dpBench.bestStats.totalMs, otherBench.bestStats.totalMs));
 
         std::cout << "\nWrote:\n"
-                  << "  " << dpPath << "\n"
-                  << "  " << greedyPath << "\n"
-                  << "  " << dpSeamsPath << "\n"
-                  << "  " << greedySeamsPath << "\n"
-                  << "  " << dpEnergyPath << "\n"
-                  << "  " << greedyEnergyPath << "\n"
-                  << "  " << sheetPath << "\n";
+            << "  " << dpPath << "\n"
+            << "  " << otherPath << "\n"
+            << "  " << dpSeamsPath << "\n"
+            << "  " << otherSeamsPath << "\n"
+            << "  " << dpEnergyPath << "\n"
+            << "  " << otherEnergyPath << "\n"
+            << "  " << sheetPath << "\n";
         return 0;
     }
 
@@ -431,7 +449,7 @@ namespace
             std::cout << "=========================================\n";
             std::cout << " 1. Resize an image\n";
             std::cout << " 2. Run correctness tests\n";
-            std::cout << " 3. Compare DP and greedy\n";
+            std::cout << " 3. Compare DP and greedy or graph cut\n";
             std::cout << " 4. Exit\n";
             const std::string choice = ask("Choice [1-4]", "1", false);
 
@@ -466,14 +484,33 @@ namespace
 
             if (choice == "3")
             {
-                compareAlgorithms(inputPath, targetW, targetH);
+                const std::string other = ask(
+                    "Compare DP with (greedy/graphcut)",
+                    "graphcut",
+                    false
+                );
+
+                try
+                {
+                    compareAlgorithms(
+                        inputPath,
+                        targetW,
+                        targetH,
+                        parseAlgorithm(other)
+                    );
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cerr << ex.what() << "\n";
+                }
+
                 continue;
             }
 
             AlgorithmChoice algorithm;
             try
             {
-                algorithm = parseAlgorithm(ask("Algorithm (dp/greedy)", "dp", false));
+                algorithm = parseAlgorithm(ask("Algorithm (dp/greedy/graphcut)", "dp", false));
             }
             catch (const std::exception& ex)
             {
@@ -492,15 +529,16 @@ int main(int argc, char* argv[])
     {
         return runAllTests() ? 0 : 1;
     }
-    if (argc == 5 && std::string(argv[1]) == "--compare")
+    if ((argc == 5 || argc == 6) && std::string(argv[1]) == "--compare")
     {
         try
         {
-            return compareAlgorithms(argv[2], std::stoi(argv[3]), std::stoi(argv[4]));
+            return compareAlgorithms(argv[2], std::stoi(argv[3]), std::stoi(argv[4]),
+                parseAlgorithm(argc == 6 ? argv[5] : "greedy"));
         }
-        catch (const std::exception&)
+        catch (const std::exception& ex)
         {
-            std::cerr << "Width and height must be whole numbers.\n";
+            std::cerr << ex.what() << "\n";
             return 1;
         }
     }
@@ -521,8 +559,10 @@ int main(int argc, char* argv[])
     {
         std::cerr << "Usage:\n"
                   << "  " << argv[0] << "                                   (interactive)\n"
-                  << "  " << argv[0] << " <input> <width> <height> [dp|greedy]\n"
-                  << "  " << argv[0] << " --compare <input> <width> <height>\n"
+            << "  " << argv[0]
+            << " <input> <width> <height> [dp|greedy|graphcut]\n"
+            << "  " << argv[0]
+            << " --compare <input> <width> <height> [greedy|graphcut]\n"
                   << "  " << argv[0] << " --test\n";
         return 1;
     }

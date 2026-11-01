@@ -43,6 +43,14 @@ namespace sc
     // each pixel's index in the ORIGINAL image so seams can be drawn later.
     void removeVerticalSeam(Image& img, std::vector<int>& origin, const Seam& seam);
 
+    // Find a minimum-energy vertical seam using minimum cut / maximum flow.
+    Seam findVerticalSeamGraphCut(
+        const EnergyMap& energy,
+        int width,
+        int height,
+        double* totalCost = nullptr
+    );
+
     // Helpers
     Image transpose(const Image& img);
     std::vector<int> transpose(const std::vector<int>& data, int width, int height);

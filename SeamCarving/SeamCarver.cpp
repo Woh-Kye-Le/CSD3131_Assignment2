@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <queue>
 
 namespace sc
 {
@@ -18,6 +19,94 @@ namespace sc
         {
             return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
         }
+
+        // Dinic's algorithm: BFS builds a level graph; DFS sends blocking flow.
+        // Each directed edge has its own initially-zero reverse residual edge.
+        // These residual edges are separate from the graph's INF constraint edges.
+        class FlowGraph
+        {
+            using Capacity = long double;
+            struct Edge { int to; int reverse; Capacity residual; };
+            std::vector<std::vector<Edge>> edges;
+            std::vector<int> level;
+            std::vector<size_t> nextEdge;
+
+            bool buildLevels(int source, int sink)
+            {
+                std::fill(level.begin(), level.end(), -1);
+                std::queue<int> q;
+                level[source] = 0;
+                q.push(source);
+                while (!q.empty())
+                {
+                    const int u = q.front(); q.pop();
+                    for (const Edge& e : edges[u])
+                        if (e.residual > 0 && level[e.to] < 0)
+                        {
+                            level[e.to] = level[u] + 1;
+                            q.push(e.to);
+                        }
+                }
+                return level[sink] >= 0;
+            }
+
+            Capacity send(int u, int sink, Capacity limit)
+            {
+                if (u == sink) return limit;
+                for (size_t& i = nextEdge[u]; i < edges[u].size(); ++i)
+                {
+                    Edge& e = edges[u][i];
+                    if (e.residual <= 0 || level[e.to] != level[u] + 1) continue;
+                    const Capacity pushed = send(e.to, sink, std::min(limit, e.residual));
+                    if (pushed > 0)
+                    {
+                        e.residual -= pushed;
+                        edges[e.to][e.reverse].residual += pushed;
+                        return pushed;
+                    }
+                }
+                return 0;
+            }
+
+        public:
+            explicit FlowGraph(int count) : edges(count), level(count), nextEdge(count) {}
+
+            void addEdge(int from, int to, Capacity capacity)
+            {
+                const int reverse = static_cast<int>(edges[to].size());
+                const int forward = static_cast<int>(edges[from].size());
+                edges[from].push_back({ to, reverse, capacity });
+                edges[to].push_back({ from, forward, 0 });
+            }
+
+            void maxFlow(int source, int sink, Capacity limit)
+            {
+                while (buildLevels(source, sink))
+                {
+                    std::fill(nextEdge.begin(), nextEdge.end(), 0);
+                    while (send(source, sink, limit) > 0) {}
+                }
+            }
+
+            std::vector<bool> sourceSide(int source) const
+            {
+                std::vector<bool> reached(edges.size(), false);
+                std::queue<int> q;
+                reached[source] = true;
+                q.push(source);
+                while (!q.empty())
+                {
+                    const int u = q.front(); q.pop();
+                    for (const Edge& e : edges[u])
+                        if (e.residual > 0 && !reached[e.to])
+                        {
+                            reached[e.to] = true;
+                            q.push(e.to);
+                        }
+                }
+                return reached;
+            }
+        };
 
         // ITU-R BT.601 luma.
         inline double luminance(const Pixel& p)
@@ -207,6 +296,78 @@ namespace sc
 
         img = std::move(out);
         origin = std::move(newOrigin);
+    }
+
+    // ------------------------------------------------------------------------
+    // Q4: minimum s-t cut. Node (x,y), 0 <= x < W, denotes a pixel;
+    // node (W,y) is an extra right boundary fixed to the sink side.
+    //
+    // S -> (0,y) : INF                 first pixel must be on source side
+    // (W,y) -> T : INF                 boundary must be on sink side
+    // (x,y) -> (x+1,y) : energy[y*W+x] pays for selected pixel x
+    // (x+1,y) -> (x,y) : INF           source-side nodes form a row prefix
+    // (x,y) -> (x-1,y +/- 1) : INF     adjacent row prefixes differ by <= 1
+    //
+    // Thus the rightmost source-side pixel in each row is the seam.
+    // Every finite cut pays for exactly one pixel per row, and every valid
+    // seam defines such a cut. Min-cut therefore minimizes the same cost as DP.
+    // Build/storage O(W*H); general Dinic bound O(V^2 E) = O((W*H)^3).
+    // ------------------------------------------------------------------------
+    Seam findVerticalSeamGraphCut(const EnergyMap& energy, int width, int height, double* totalCost)
+    {
+        if (width < 1 || height < 1 ||
+            static_cast<size_t>(width) * height != energy.size())
+            throw std::invalid_argument("Graph cut requires a non-empty, correctly sized energy map.");
+        const long long nodeCount = (static_cast<long long>(width) + 1) * height + 2;
+        if (nodeCount > std::numeric_limits<int>::max())
+            throw std::length_error("Graph cut graph exceeds the supported node count.");
+
+        long double sum = 0;
+        for (double value : energy)
+        {
+            if (!std::isfinite(value) || value < 0)
+                throw std::invalid_argument("Graph cut energies must be finite and non-negative.");
+            sum += value;
+        }
+        // Larger than the cost of ANY seam. Finite avoids infinity-infinity
+        // during residual updates. long double reduces rounding accumulation.
+        const long double inf = sum + std::max(1.0L, sum);
+        if (!std::isfinite(inf))
+            throw std::overflow_error("Graph cut capacities exceed the supported range.");
+
+        const int stride = width + 1;
+        const int source = static_cast<int>(nodeCount) - 2;
+        const int sink = source + 1;
+        FlowGraph graph(sink + 1);
+        auto node = [stride](int x, int y) { return y * stride + x; };
+        for (int y = 0; y < height; ++y)
+        {
+            graph.addEdge(source, node(0, y), inf);
+            graph.addEdge(node(width, y), sink, inf);
+            for (int x = 0; x < width; ++x)
+            {
+                graph.addEdge(node(x, y), node(x + 1, y), energy[static_cast<size_t>(y) * width + x]);
+                graph.addEdge(node(x + 1, y), node(x, y), inf);
+                if (x > 0)
+                {
+                    if (y > 0) graph.addEdge(node(x, y), node(x - 1, y - 1), inf);
+                    if (y + 1 < height) graph.addEdge(node(x, y), node(x - 1, y + 1), inf);
+                }
+            }
+        }
+        graph.maxFlow(source, sink, inf);
+        const auto reached = graph.sourceSide(source);
+        Seam seam(height);
+        double cost = 0;
+        for (int y = 0; y < height; ++y)
+        {
+            int x = 0;
+            while (x + 1 < width && reached[node(x + 1, y)]) ++x;
+            seam[y] = x;
+            cost += energy[static_cast<size_t>(y) * width + x];
+        }
+        if (totalCost) *totalCost = cost;
+        return seam;
     }
 
     // ------------------------------------------------------------------------
